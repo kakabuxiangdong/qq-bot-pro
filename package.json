@@ -1,0 +1,46 @@
+{
+  "name": "qq-bot-pro",
+  "version": "1.0.2",
+  "description": "给 DSH 的 QQ 官方机器人通道（@tencent-connect/dsh-qqbot / im-qqbot）补齐表情包、主动发言、长期记忆与群聊存档",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "qq",
+    "qqbot",
+    "onebot",
+    "plugin"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "patch-host": "node lib/patch-host.mjs",
+    "check-host": "node lib/patch-host.mjs --check",
+    "revert-host": "node lib/patch-host.mjs --revert",
+    "gen-patches": "node lib/gen-patches.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": [
+        "./cordis.patch.yml",
+        "./presets/qq-bot.patch.yml"
+      ]
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./*": "./*"
+  }
+}

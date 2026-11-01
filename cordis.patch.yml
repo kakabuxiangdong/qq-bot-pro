@@ -1,0 +1,7 @@
+# qq-bot-pro 插件入口：id 与 name 同用 qq-bot-pro（无独立 settings 命名空间）。
+# 该包在 profile 的 dsh.profile.bundles 里排在 @tencent-connect/dsh-qqbot 之后，
+# 保证 bootstrapGateway 同步段已执行、globalThis.__qqbotRuntime 已就绪。
+- insert:
+    - id: qq-bot-pro
+      name: qq-bot-pro
+      config: {}
