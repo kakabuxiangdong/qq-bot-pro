@@ -1,3 +1,35 @@
+# qq-bot-pro v1.0.3
+
+适配 `@tencent-connect/dsh-qqbot` **0.5.5**（整包目录由 `dist/` 改成 `lib/`），并把两处「改了没效果」的坑修掉。
+
+## 为什么要有这个版本
+
+0.5.5 把构建产物目录从 `dist/` 换成 `lib/`。旧版补丁器只认 `dist/`、且版本白名单里没有 0.5.5，于是：
+
+- 打补丁直接报「版本是 0.5.5，补丁基线是 0.5.3；拒绝打补丁」；
+- 覆盖安装/升级依赖后，node_modules 被整包替换，之前打好的补丁全部消失；
+- 宿主照常连上 QQ，但插件拿不到运行时（`__qqbotRuntime`），**表情桥 / 记忆注入 / 冷场主动发言 / 群聊存档 / 归档看守一起失效**——表现就是「她一直不说话、也不主动抛话题」。
+
+## v1.0.3 修复
+
+- **目录兼容**：`lib/patch-host.mjs` 新增 `realRel()`，补丁键仍按 `dist/…` 写，实际打补丁时如果目标包只有 `lib/` 就自动映射过去；新旧布局都能处理。
+- **版本白名单**：`lib/patches.json` 新增 `baseVersions: ["0.5.3","0.5.4","0.5.5"]`（0.5.3 → 0.5.5 逐 hunk 比对过，24 个锚点全部命中，补丁内容本身不用改）。
+- **群历史模块路径**：`lib/index.js` 原来写死 `…/dsh-qqbot/dist/features/history-store.js`，改成遍历 `~/.dsh/profiles/*/node_modules/@tencent-connect/dsh-qqbot/{lib,dist}/features/history-store.js` 逐个尝试加载，取到 `getHistoryStore` 即用。
+- **JSON 读取容忍 BOM**：新增 `readJson()`，读 `settings.json` / `timer.json` 时先剥掉 UTF-8 BOM。用记事本或 PowerShell `Set-Content -Encoding UTF8` 改过配置文件后，原来 `JSON.parse` 会抛错并被静默吞掉、参数回退默认值——改了没效果且毫无提示。现在正常生效。
+
+## 从 v1.0.2 升级
+
+1. 解压覆盖插件目录；
+2. **重跑一次补丁器**（补丁内容变了，必须重打）：
+   ```
+   node ~/.dsh/plugins/qq-bot-pro/lib/patch-host.mjs
+   ```
+3. 完全退出 DSH 再打开（补丁在 node_modules 里，热重载不会重新加载宿主侧文件）。
+
+已在 0.5.5 真机验证：`--check` 显示 5 个文件可打；打完 `bridge.log` 出现 `runtime:ready` / `timer:install` / `settings:route-installed` / `history:synced`；临时把定时器调到 60 秒、概率 1 后，群和私聊各主动开口一次并带图（`md:enter len=95 hasMedia=true` → `media:sent …nekowhale-stickers\byhash\37abb6de7c6b.gif`），随后参数已恢复默认。
+
+---
+
 # qq-bot-pro v1.0.2
 
 在 v1.0.1 基础上加了两块东西：**设置页里能直接写人设**，以及**从第三方桥迁移的路径**。

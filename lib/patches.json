@@ -1,114 +1,119 @@
 {
- "baseVersion": "0.5.3",
- "files": {
-  "dist/gateway/bootstrap.js": [
-   {
-    "find": "import { setupMiddlewares } from \"./middleware-setup.js\";\nimport { startMediaCleanup } from \"../media/media-cleaner.js\";",
-    "replace": "import { setupMiddlewares } from \"./middleware-setup.js\";\nimport { markBotSpoke } from \"./spoke-tracker.js\";\nimport { startMediaCleanup } from \"../media/media-cleaner.js\";"
-   },
-   {
-    "find": "    const sender = {\n        sendMarkdown: (target, content, opts) => sendResolvedMarkdown(bot, resolveReplyTarget(target, replyLimiter, true), content, opts),\n        openStream: (target) => bot.openStream({",
-    "replace": "    const sender = {\n        sendMarkdown: (target, content, opts) => {\n            // 记下「她刚在这个群说过话」，供 mentionGate 的隐式 @ 判断接话\n            const resolved = resolveReplyTarget(target, replyLimiter, true);\n            markBotSpoke(resolved);\n            return sendResolvedMarkdown(bot, resolved, content, opts);\n        },\n        openStream: (target) => bot.openStream({"
-   },
-   {
-    "find": "    const mediaSender = {\n        sendImage: (target, source) => bot.sendImage(resolveReplyTarget(target, replyLimiter, false), source),\n        sendVideo: (target, source) => bot.sendVideo(resolveReplyTarget(target, replyLimiter, false), source),\n        sendVoice: (target, source) => bot.sendVoice(resolveReplyTarget(target, replyLimiter, false), source),\n        sendFile: (target, source, opts) => bot.sendFile(resolveReplyTarget(target, replyLimiter, false), source, opts),\n    };",
-    "replace": "    const mediaSender = {\n        sendImage: (target, source) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendImage(resolved, source);\n        },\n        sendVideo: (target, source) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendVideo(resolved, source);\n        },\n        sendVoice: (target, source) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendVoice(resolved, source);\n        },\n        sendFile: (target, source, opts) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendFile(resolved, source, opts);\n        },\n    };"
-   },
-   {
-    "find": "    ensureVisionInputModal(config.vision, logger);\n    registerDescribeImageTool(ctx, config.vision, logger);\n    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──",
-    "replace": "    ensureVisionInputModal(config.vision, logger);\n    try {\n        registerDescribeImageTool(ctx, config.vision, logger);\n    }\n    catch (err) {\n        // 启动重试时工具已注册过：视为已完成，继续走后面的步骤\n        logger.warn('qqbot_describe_image 注册跳过: ' + (err instanceof Error ? err.message : String(err)));\n    }\n    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──"
-   },
-   {
-    "find": "    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──\n    registerSendFileTool(ctx, mediaSender, manager, config, logger);\n    // ── 生命周期 ──",
-    "replace": "    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──\n    try {\n        registerSendFileTool(ctx, mediaSender, manager, config, logger);\n    }\n    catch (err) {\n        // 启动重试时工具已注册过：视为已完成，继续走后面的步骤\n        logger.warn('qqbot_send_file 注册跳过: ' + (err instanceof Error ? err.message : String(err)));\n    }\n    // ── 宿主服务探测：归档看守需要 workspaceRegistry ──\n    // QQ 会话一旦被标成「已归档」，ArchivedSessionGate 会让每一轮 pre-step 直接\n    // reject（turn/end 记 blocked、没有任何回复）。这里把能拿到的注册表句柄交给\n    // qq-bot-pro，由它定期把 QQ 会话从归档里捞回来。\n    const probeWorkspaceRegistry = () => {\n        const cands = [];\n        try { if (ctx) cands.push(['ctx', ctx]); } catch { }\n        try { if (agents && agents.ctx) cands.push(['agents.ctx', agents.ctx]); } catch { }\n        try { if (ctx && ctx.root) cands.push(['ctx.root', ctx.root]); } catch { }\n        const trail = [];\n        const seen = new Set();\n        for (const [label, c] of cands) {\n            if (!c || seen.has(c)) continue;\n            seen.add(c);\n            let reg;\n            try { reg = c.get?.('workspaceRegistry') ?? c.workspaceRegistry; } catch { }\n            const ok = Boolean(reg && Array.isArray(reg.archivedSessionIds) && typeof reg.unarchiveSession === 'function');\n            trail.push(label + '=' + (ok ? 'ok' : typeof reg));\n            if (ok) return { reg, label, trail };\n        }\n        return { reg: undefined, label: '', trail };\n    };\n    const registryProbe = probeWorkspaceRegistry();\n    try { logger.info('[im-qqbot] workspaceRegistry probe: ' + (registryProbe.trail.join(', ') || 'none')); } catch { }\n    // ── 暴露运行时给 qq-bot-pro 插件（记忆注入 / 冷场定时器 / 表情包工具） ──\n    const qqbotRuntime = {\n        bot, manager, sender, mediaSender, config, logger, outbound,\n        questionChannel, approvalChannel, ctx,\n        workspaceRegistry: registryProbe.reg,\n        workspaceRegistryFrom: registryProbe.label,\n        workspaceRegistryProbe: registryProbe.trail.join(', '),\n        sendToAgent: async (record, text) => {\n            const { createUserMessage } = await import('@deepseek-ai/dsh-llm');\n            await record.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }));\n            await record.agent.whenIdle();\n        },\n    };\n    globalThis.__qqbotRuntime = qqbotRuntime;\n    try { ctx.provide('qqbot-runtime', qqbotRuntime); } catch { }\n    // ── 直接内联装载 qq-bot-pro（绕过 profile bundle 装配，保证一定装上）──\n    const { pathToFileURL } = await import('node:url');\n    const { homedir: qqHomedir } = await import('node:os');\n    const { join: qqJoin } = await import('node:path');\n    const qqPluginDir = process.env.QQBOT_PLUGIN_DIR || qqJoin(qqHomedir(), '.dsh', 'plugins', 'qq-bot-pro');\n    import(pathToFileURL(qqJoin(qqPluginDir, 'lib', 'host-bridge.js')).href)\n        .then((m) => m.install(qqbotRuntime))\n        .catch(async (err) => {\n        globalThis.__qqBotProError = String((err && err.stack) || err);\n        try {\n            const fs = await import('node:fs');\n            const os = await import('node:os');\n            const path = await import('node:path');\n            const logPath = path.join(os.homedir(), '.dsh', 'qq-bot-pro', 'bridge.log');\n            fs.mkdirSync(path.dirname(logPath), { recursive: true });\n            fs.appendFileSync(logPath, '[' + new Date().toISOString() + '] host-bridge:FAILED ' + globalThis.__qqBotProError + '\\n', 'utf8');\n        }\n        catch { }\n    });\n    // ── 生命周期 ──"
-   },
-   {
-    "find": "//# sourceMappingURL=bootstrap.js.map",
-    "replace": "//# sourceMappingURL=bootstrap.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
-   }
+  "baseVersion": "0.5.3",
+  "baseVersions": [
+    "0.5.3",
+    "0.5.4",
+    "0.5.5"
   ],
-  "dist/gateway/middleware-setup.js": [
-   {
-    "find": "import { getHistoryStore, historyGroupKey } from \"../features/history-store.js\";\nexport function setupMiddlewares(bot, config, manager, logger) {",
-    "replace": "import { getHistoryStore, historyGroupKey } from \"../features/history-store.js\";\nimport { isImplicitMention } from \"./spoke-tracker.js\";\nimport { appendFileSync, mkdirSync } from 'node:fs';\nimport { homedir } from 'node:os';\nimport { dirname, join as joinPath } from 'node:path';\nconst QQ_GATE_LOG = joinPath(homedir(), '.dsh', 'qq-bot-pro', 'bridge.log');\nfunction gateDiag(message) {\n    try {\n        mkdirSync(dirname(QQ_GATE_LOG), { recursive: true });\n        appendFileSync(QQ_GATE_LOG, '[' + new Date().toISOString() + '] ' + message + '\\n');\n    }\n    catch { /* ignore */ }\n}\nexport function setupMiddlewares(bot, config, manager, logger) {"
-   },
-   {
-    "find": "    // 5. 群聊 @bot 门控\n    bot.use(mentionGate({",
-    "replace": "    // 5. 群聊 @bot 门控\n    //    isImplicitMention：群里没 @ 她、但明显在接她话的消息也放行 ——\n    //    官方机器人默认只在被 @ 时收到群消息，开启「接收所有消息」后每条都会进来，\n    //    这条规则保证她能接着自己的话往下聊，而不是每句都得 @。\n    bot.use(mentionGate({"
-   },
-   {
-    "find": "        requireMentionInGroup: config.requireMention,\n    }));",
-    "replace": "        requireMentionInGroup: config.requireMention,\n        isImplicitMention: (ctx) => isImplicitMention(ctx),\n        onSkip: (ctx, decision) => {\n            const msg = ctx.message;\n            if (msg?.kind !== 'group')\n                return;\n            gateDiag('gate:skip ' + decision.reason + ' g=' + String(msg.groupOpenid || '').slice(0, 12) + ' from=' + String(msg.senderName || msg.senderId || '').slice(0, 20) + ' ' + String(msg.content || '').slice(0, 40).replace(/\\s+/g, ' '));\n        },\n    }));"
-   },
-   {
-    "find": "    }));\n    // 6. 内容清洗（去 @marker、表情标签、多余空白）",
-    "replace": "    }));\n    // 5.5 门控观测：放行时记一条，便于确认群消息真的到了、以及是不是隐式接话\n    bot.use(async (ctx, next) => {\n        try {\n            const msg = ctx.message;\n            if (msg?.kind === 'group') {\n                const decision = ctx.state?.mention;\n                gateDiag('gate:pass ' + msg.rawEventType + ' implicit=' + (decision?.implicit ?? '?') + ' why=' + (msg.__why ?? ctx.state?.spokeReason ?? '-') + ' g=' + String(msg.groupOpenid || '').slice(0, 12) + ' from=' + String(msg.senderName || msg.senderId || '').slice(0, 20) + ' text=' + String(msg.content || '').slice(0, 40).replace(/\\s+/g, ' '));\n            }\n        }\n        catch { /* 观测失败不影响链路 */ }\n        await next();\n    });\n    // 6. 内容清洗（去 @marker、表情标签、多余空白）"
-   },
-   {
-    "find": "//# sourceMappingURL=middleware-setup.js.map",
-    "replace": "//# sourceMappingURL=middleware-setup.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
-   }
-  ],
-  "dist/model/model-resolver.js": [
-   {
-    "find": "import { SettingsReader } from \"./settings-reader.js\";\nexport class ModelResolver {",
-    "replace": "import { SettingsReader } from \"./settings-reader.js\";\n// [qq-bot-pro patch] QQ 是纯聊天场景，默认思考强度固定为 low（省 token、回得快）。\n// 若某处显式给了 reasoningEffort（per-peer override / config），则以显式值为准。\nconst QQ_DEFAULT_REASONING_EFFORT = 'low';\nfunction withChatEffort(route) {\n    if (!route)\n        return route;\n    if (route.reasoningEffort)\n        return route;\n    return { ...route, reasoningEffort: QQ_DEFAULT_REASONING_EFFORT };\n}\nexport class ModelResolver {"
-   },
-   {
-    "find": "    getEffectiveRoute(sessionKey) {\n        return this.prefs.getOverride(sessionKey) ?? this.resolveDefault();\n    }",
-    "replace": "    getEffectiveRoute(sessionKey) {\n        return withChatEffort(this.prefs.getOverride(sessionKey) ?? this.resolveDefault());\n    }"
-   },
-   {
-    "find": "        if (override)\n            return override;\n        if (this.config.provider && this.config.model) {",
-    "replace": "        if (override)\n            return withChatEffort(override);\n        if (this.config.provider && this.config.model) {"
-   },
-   {
-    "find": "            return withChatEffort(override);\n        if (this.config.provider && this.config.model) {\n            return { provider: this.config.provider, model: this.config.model };\n        }\n        return this.resolveDefault();",
-    "replace": "            return withChatEffort(override);\n        if (this.config.provider && this.config.model) {\n            return withChatEffort({ provider: this.config.provider, model: this.config.model });\n        }\n        return this.resolveDefault();"
-   },
-   {
-    "find": "        }\n        return this.resolveDefault();\n    }",
-    "replace": "        }\n        return withChatEffort(this.resolveDefault());\n    }"
-   },
-   {
-    "find": "//# sourceMappingURL=model-resolver.js.map",
-    "replace": "//# sourceMappingURL=model-resolver.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
-   }
-  ],
-  "dist/transport/inbound.js": [
-   {
-    "find": "import { createUserMessage } from '@deepseek-ai/dsh-llm';\nimport { classifyContentType, isVoiceContentType, } from \"./attachment.js\";",
-    "replace": "import { createUserMessage } from '@deepseek-ai/dsh-llm';\nimport { appendFileSync, mkdirSync } from 'node:fs';\nimport { homedir } from 'node:os';\nimport { dirname, join as joinPath } from 'node:path';\nimport { classifyContentType, isVoiceContentType, } from \"./attachment.js\";"
-   },
-   {
-    "find": "    const content = [{ type: 'text', text: agentBody }];\n    const message = createUserMessage({",
-    "replace": "    const content = [{ type: 'text', text: agentBody }];\n    // [qq-bot-pro patch] 用户发的图片直接作为 image block 塞进模型上下文，\n    // 让模型（deepseek-flash 支持图片输入）真正「看见」图，而不是只拿到一个本地路径。\n    await attachInboundImages(content, mwState, logger);\n    const message = createUserMessage({"
-   },
-   {
-    "find": "}\n// ══════════════════════════════════════════════════════════════",
-    "replace": "}\n\n// ══════════════════════════════════════════════════════════════"
-   },
-   {
-    "find": "// ══════════════════════════════════════════════════════════════\n// Body Assembly（5 层组装）",
-    "replace": "// ══════════════════════════════════════════════════════════════\n// [qq-bot-pro patch] 入站图片注入\n// ══════════════════════════════════════════════════════════════\nconst QQ_DIAG_FILE = joinPath(homedir(), '.dsh', 'qq-bot-pro', 'bridge.log');\nfunction qqDiag(msg) {\n    try {\n        mkdirSync(dirname(QQ_DIAG_FILE), { recursive: true });\n        appendFileSync(QQ_DIAG_FILE, '[' + new Date().toISOString() + '] inbound: ' + msg + '\\n', 'utf8');\n    }\n    catch { }\n}\nfunction sniffImageMediaType(bytes) {\n    if (!bytes || bytes.length < 12)\n        return null;\n    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)\n        return 'image/png';\n    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)\n        return 'image/jpeg';\n    if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38)\n        return 'image/gif';\n    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46\n        && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50)\n        return 'image/webp';\n    return null;\n}\n/** 把已下载的图片附件注入 content（image block），失败仅告警不阻断消息。 */\nexport async function attachInboundImages(content, state, logger) {\n    const files = [\n        ...(state?.downloadedFiles ?? []),\n        ...(state?.downloadedQuoteFiles ?? []),\n    ].filter((f) => f && f.contentType === 'image' && typeof f.localPath === 'string');\n    if (files.length === 0)\n        return;\n    const rt = globalThis.__qqbotRuntime;\n    let attachments;\n    try {\n        attachments = rt?.ctx?.get?.('attachments');\n    }\n    catch { attachments = undefined; }\n    if (!attachments?.saveImage) {\n        qqDiag('no attachments service, skip image inject (' + files.length + ')');\n        logger?.warn?.('im-qqbot: attachments 服务不可用，图片未注入模型上下文');\n        return;\n    }\n    const { readFile } = await import('node:fs/promises');\n    let ok = 0;\n    for (const f of files) {\n        try {\n            const data = new Uint8Array(await readFile(f.localPath));\n            const mediaType = sniffImageMediaType(data);\n            if (!mediaType) {\n                qqDiag('skip unknown image type: ' + f.localPath);\n                continue;\n            }\n            const ref = await attachments.saveImage({ data, mediaType, name: f.filename });\n            content.push({ type: 'image', attachment: ref });\n            ok += 1;\n            qqDiag('image injected ok: ' + f.localPath + ' ' + mediaType + ' ' + data.length + 'B');\n        }\n        catch (err) {\n            qqDiag('image inject FAILED: ' + f.localPath + ' — ' + (err instanceof Error ? err.message : String(err)));\n            logger?.warn?.('im-qqbot: 图片注入失败 ' + f.localPath + ': ' + (err instanceof Error ? err.message : String(err)));\n        }\n    }\n    if (ok > 0) {\n        content.push({ type: 'text', text: '（上面 ' + ok + ' 张图片是用户这次发来的，已直接附在这条消息里，可以直接看，不需要再读文件或调用工具）' });\n        logger?.info?.('im-qqbot: 已注入 ' + ok + ' 张图片到模型上下文');\n    }\n}\n\n// ══════════════════════════════════════════════════════════════\n// Body Assembly（5 层组装）"
-   },
-   {
-    "find": "//# sourceMappingURL=inbound.js.map",
-    "replace": "//# sourceMappingURL=inbound.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
-   }
-  ],
-  "dist/index.js": [
-   {
-    "find": "    const resolvedConfig = { ...config, appId, appSecret };\n    await bootstrapGateway(ctx, agents, resolvedConfig, logger);\n}",
-    "replace": "    const resolvedConfig = { ...config, appId, appSecret };\n    // ── 启动重试（qq-bot-pro 补丁）：冷启动偶发网关未拉起，重试并落盘诊断 ──\n    let lastError;\n    const BOOT_ATTEMPTS = 4;\n    for (let attempt = 1; attempt <= BOOT_ATTEMPTS; attempt++) {\n        try {\n            await bootstrapGateway(ctx, agents, resolvedConfig, logger);\n            return;\n        }\n        catch (err) {\n            lastError = err;\n            const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);\n            logger.error(`QQ 网关启动失败（第 ${attempt}/${BOOT_ATTEMPTS} 次）: ${detail}`);\n            try {\n                const { appendFileSync, mkdirSync } = await import('node:fs');\n                const { homedir } = await import('node:os');\n                const { join: j } = await import('node:path');\n                const dir = j(homedir(), '.dsh', 'qq-bot-pro');\n                mkdirSync(dir, { recursive: true });\n                appendFileSync(j(dir, 'bridge.log'), `[${new Date().toISOString()}] boot:attempt-fail ${attempt}/${BOOT_ATTEMPTS} ${String(detail).split('\\n')[0]}\\n`);\n            }\n            catch { /* 诊断写入失败不影响重试 */ }\n            if (attempt < BOOT_ATTEMPTS) {\n                await new Promise((r) => setTimeout(r, 3000 * attempt));\n            }\n        }\n    }\n    throw lastError;\n}"
-   },
-   {
-    "find": "//# sourceMappingURL=index.js.map",
-    "replace": "//# sourceMappingURL=index.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
-   }
-  ]
- },
- "create": {
-  "dist/gateway/spoke-tracker.js": "/**\n * 群聊「接话」判定表（纯本地，零 token）。\n *\n * 官方 QQ 机器人默认只在被 @ 时处理群消息（config.requireMention）。群管理开启\n * 「接收所有消息」后每条群消息都会推到网关，但仍要决定「这条要不要跑一轮模型」\n * ——跑一轮就是一次 token。所有判定都在这里，只用时间戳和字符串匹配，不调模型。\n *\n * 配置：~/.dsh/qq-bot-pro/settings.json 的 gate 段（改完 2 秒内生效）。\n * 每条规则都能单独关：answerAll / replyToName / replyToQuote / replyToFollowUp /\n * skipWhenMentioningOthers / mergeBurst。\n */\nimport { readFileSync } from 'node:fs';\nimport { homedir } from 'node:os';\nimport { join } from 'node:path';\n\nconst spoken = new Map();   // 'group:<openid>' -> 她最后说话时间\nconst answered = new Map(); // 'group:<openid>:<senderId>' -> 上次放行时间（连发合并用）\n\nconst SETTINGS_FILE = join(homedir(), '.dsh', 'qq-bot-pro', 'settings.json');\nconst LEGACY_GATE_FILE = join(homedir(), '.dsh', 'qq-bot-pro', 'gate.json');\nconst DEFAULT_GATE = {\n    answerAll: false,                 // 群里谁说话都接（会花 token：每条约一轮）；默认关，见 settings.json\n    replyToName: true,                // 有人叫她名字就接\n    replyToQuote: true,               // 引用她的话就接\n    replyToFollowUp: true,            // 她刚说完话，接着说的话就接\n    skipWhenMentioningOthers: true,   // @ 了别人时不插嘴\n    mergeBurst: true,                 // 同一个人连发只接第一句\n    nameHints: ['小肥鱼', '肥鱼', '鲸鱼', '小鱼'],\n    followWindowMs: 5 * 60 * 1000,\n    quoteWindowMs: 15 * 60 * 1000,\n    burstMs: 2500\n};\n\nlet cache = { at: 0, value: DEFAULT_GATE };\nfunction readJson(file) {\n    try {\n        const raw = JSON.parse(readFileSync(file, 'utf8'));\n        return raw && typeof raw === 'object' ? raw : undefined;\n    }\n    catch {\n        return undefined;\n    }\n}\nfunction gateConfig() {\n    const now = Date.now();\n    if (now - cache.at < 2000)\n        return cache.value;\n    const settings = readJson(SETTINGS_FILE);\n    const gate = (settings && typeof settings.gate === 'object' && settings.gate)\n        ? settings.gate\n        : (readJson(LEGACY_GATE_FILE) ?? {});\n    cache = { at: now, value: { ...DEFAULT_GATE, ...gate } };\n    return cache.value;\n}\n\nfunction keyOf(target) {\n    if (!target || !target.scope || !target.targetId)\n        return undefined;\n    return String(target.scope) + ':' + String(target.targetId);\n}\n\n/** 记一次「她在这个会话说过话」。 */\nexport function markBotSpoke(target, at = Date.now()) {\n    const key = keyOf(target);\n    if (!key)\n        return;\n    spoken.set(key, at);\n}\n\n/** 她最后一次在这个会话说话的时间戳（没有则 0）。 */\nexport function lastBotSpoke(target) {\n    return spoken.get(keyOf(target)) ?? 0;\n}\n\n/**\n * 隐式 @：群里没 @ 她、但这条消息该接。\n * 命中顺序：叫她名字 → 引用她 → 接着她的话 → answerAll。\n * 每次命中都把原因写到 ctx.state.spokeReason，便于日志核对。\n */\nexport function isImplicitMention(ctx) {\n    try {\n        const msg = ctx && ctx.message;\n        if (!msg || msg.kind !== 'group' || !msg.groupOpenid)\n            return false;\n        if (msg.senderIsBot)\n            return false;\n        const cfg = gateConfig();\n        const mentions = msg.mentions;\n        if (cfg.skipWhenMentioningOthers !== false && Array.isArray(mentions) && mentions.length > 0 && !mentions.some((m) => m && m.is_you === true))\n            return false;\n        const key = 'group:' + String(msg.groupOpenid);\n        const who = key + ':' + String(msg.senderId || '');\n        const now = Date.now();\n        const text = String(msg.content || '');\n        const prev = answered.get(who) ?? 0;\n        const burst = cfg.mergeBurst !== false && now - prev < (cfg.burstMs ?? 2500);\n        const pass = (reason) => {\n            if (ctx.state)\n                ctx.state.spokeReason = reason;\n            answered.set(who, now);\n            return true;\n        };\n        const hit = (reason) => (burst ? false : pass(reason));\n        if (cfg.replyToName !== false && (cfg.nameHints || []).some((h) => h && text.includes(String(h))))\n            return hit('name');\n        const last = spoken.get(key) ?? 0;\n        const quote = ctx.state && ctx.state.quote;\n        const quoted = Boolean(quote && (quote.text || quote.rawContent));\n        if (cfg.replyToQuote !== false && quoted && last && now - last <= (cfg.quoteWindowMs ?? 900000))\n            return hit('quote');\n        if (cfg.replyToFollowUp !== false && last && now - last <= (cfg.followWindowMs ?? 300000))\n            return hit('follow');\n        if (cfg.answerAll !== false)\n            return hit('all');\n        return false;\n    }\n    catch {\n        return false;\n    }\n}\n"
- }
+  "files": {
+    "dist/gateway/bootstrap.js": [
+      {
+        "find": "import { setupMiddlewares } from \"./middleware-setup.js\";\nimport { startMediaCleanup } from \"../media/media-cleaner.js\";",
+        "replace": "import { setupMiddlewares } from \"./middleware-setup.js\";\nimport { markBotSpoke } from \"./spoke-tracker.js\";\nimport { startMediaCleanup } from \"../media/media-cleaner.js\";"
+      },
+      {
+        "find": "    const sender = {\n        sendMarkdown: (target, content, opts) => sendResolvedMarkdown(bot, resolveReplyTarget(target, replyLimiter, true), content, opts),\n        openStream: (target) => bot.openStream({",
+        "replace": "    const sender = {\n        sendMarkdown: (target, content, opts) => {\n            // 记下「她刚在这个群说过话」，供 mentionGate 的隐式 @ 判断接话\n            const resolved = resolveReplyTarget(target, replyLimiter, true);\n            markBotSpoke(resolved);\n            return sendResolvedMarkdown(bot, resolved, content, opts);\n        },\n        openStream: (target) => bot.openStream({"
+      },
+      {
+        "find": "    const mediaSender = {\n        sendImage: (target, source) => bot.sendImage(resolveReplyTarget(target, replyLimiter, false), source),\n        sendVideo: (target, source) => bot.sendVideo(resolveReplyTarget(target, replyLimiter, false), source),\n        sendVoice: (target, source) => bot.sendVoice(resolveReplyTarget(target, replyLimiter, false), source),\n        sendFile: (target, source, opts) => bot.sendFile(resolveReplyTarget(target, replyLimiter, false), source, opts),\n    };",
+        "replace": "    const mediaSender = {\n        sendImage: (target, source) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendImage(resolved, source);\n        },\n        sendVideo: (target, source) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendVideo(resolved, source);\n        },\n        sendVoice: (target, source) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendVoice(resolved, source);\n        },\n        sendFile: (target, source, opts) => {\n            const resolved = resolveReplyTarget(target, replyLimiter, false);\n            markBotSpoke(resolved);\n            return bot.sendFile(resolved, source, opts);\n        },\n    };"
+      },
+      {
+        "find": "    ensureVisionInputModal(config.vision, logger);\n    registerDescribeImageTool(ctx, config.vision, logger);\n    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──",
+        "replace": "    ensureVisionInputModal(config.vision, logger);\n    try {\n        registerDescribeImageTool(ctx, config.vision, logger);\n    }\n    catch (err) {\n        // 启动重试时工具已注册过：视为已完成，继续走后面的步骤\n        logger.warn('qqbot_describe_image 注册跳过: ' + (err instanceof Error ? err.message : String(err)));\n    }\n    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──"
+      },
+      {
+        "find": "    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──\n    registerSendFileTool(ctx, mediaSender, manager, config, logger);\n    // ── 生命周期 ──",
+        "replace": "    // ── 附件发送工具注册（qqbot_send_file，发送器见上方 mediaSender） ──\n    try {\n        registerSendFileTool(ctx, mediaSender, manager, config, logger);\n    }\n    catch (err) {\n        // 启动重试时工具已注册过：视为已完成，继续走后面的步骤\n        logger.warn('qqbot_send_file 注册跳过: ' + (err instanceof Error ? err.message : String(err)));\n    }\n    // ── 宿主服务探测：归档看守需要 workspaceRegistry ──\n    // QQ 会话一旦被标成「已归档」，ArchivedSessionGate 会让每一轮 pre-step 直接\n    // reject（turn/end 记 blocked、没有任何回复）。这里把能拿到的注册表句柄交给\n    // qq-bot-pro，由它定期把 QQ 会话从归档里捞回来。\n    const probeWorkspaceRegistry = () => {\n        const cands = [];\n        try { if (ctx) cands.push(['ctx', ctx]); } catch { }\n        try { if (agents && agents.ctx) cands.push(['agents.ctx', agents.ctx]); } catch { }\n        try { if (ctx && ctx.root) cands.push(['ctx.root', ctx.root]); } catch { }\n        const trail = [];\n        const seen = new Set();\n        for (const [label, c] of cands) {\n            if (!c || seen.has(c)) continue;\n            seen.add(c);\n            let reg;\n            try { reg = c.get?.('workspaceRegistry') ?? c.workspaceRegistry; } catch { }\n            const ok = Boolean(reg && Array.isArray(reg.archivedSessionIds) && typeof reg.unarchiveSession === 'function');\n            trail.push(label + '=' + (ok ? 'ok' : typeof reg));\n            if (ok) return { reg, label, trail };\n        }\n        return { reg: undefined, label: '', trail };\n    };\n    const registryProbe = probeWorkspaceRegistry();\n    try { logger.info('[im-qqbot] workspaceRegistry probe: ' + (registryProbe.trail.join(', ') || 'none')); } catch { }\n    // ── 暴露运行时给 qq-bot-pro 插件（记忆注入 / 冷场定时器 / 表情包工具） ──\n    const qqbotRuntime = {\n        bot, manager, sender, mediaSender, config, logger, outbound,\n        questionChannel, approvalChannel, ctx,\n        workspaceRegistry: registryProbe.reg,\n        workspaceRegistryFrom: registryProbe.label,\n        workspaceRegistryProbe: registryProbe.trail.join(', '),\n        sendToAgent: async (record, text) => {\n            const { createUserMessage } = await import('@deepseek-ai/dsh-llm');\n            await record.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }));\n            await record.agent.whenIdle();\n        },\n    };\n    globalThis.__qqbotRuntime = qqbotRuntime;\n    try { ctx.provide('qqbot-runtime', qqbotRuntime); } catch { }\n    // ── 直接内联装载 qq-bot-pro（绕过 profile bundle 装配，保证一定装上）──\n    const { pathToFileURL } = await import('node:url');\n    const { homedir: qqHomedir } = await import('node:os');\n    const { join: qqJoin } = await import('node:path');\n    const qqPluginDir = process.env.QQBOT_PLUGIN_DIR || qqJoin(qqHomedir(), '.dsh', 'plugins', 'qq-bot-pro');\n    import(pathToFileURL(qqJoin(qqPluginDir, 'lib', 'host-bridge.js')).href)\n        .then((m) => m.install(qqbotRuntime))\n        .catch(async (err) => {\n        globalThis.__qqBotProError = String((err && err.stack) || err);\n        try {\n            const fs = await import('node:fs');\n            const os = await import('node:os');\n            const path = await import('node:path');\n            const logPath = path.join(os.homedir(), '.dsh', 'qq-bot-pro', 'bridge.log');\n            fs.mkdirSync(path.dirname(logPath), { recursive: true });\n            fs.appendFileSync(logPath, '[' + new Date().toISOString() + '] host-bridge:FAILED ' + globalThis.__qqBotProError + '\\n', 'utf8');\n        }\n        catch { }\n    });\n    // ── 生命周期 ──"
+      },
+      {
+        "find": "//# sourceMappingURL=bootstrap.js.map",
+        "replace": "//# sourceMappingURL=bootstrap.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
+      }
+    ],
+    "dist/gateway/middleware-setup.js": [
+      {
+        "find": "import { getHistoryStore, historyGroupKey } from \"../features/history-store.js\";\nexport function setupMiddlewares(bot, config, manager, logger) {",
+        "replace": "import { getHistoryStore, historyGroupKey } from \"../features/history-store.js\";\nimport { isImplicitMention } from \"./spoke-tracker.js\";\nimport { appendFileSync, mkdirSync } from 'node:fs';\nimport { homedir } from 'node:os';\nimport { dirname, join as joinPath } from 'node:path';\nconst QQ_GATE_LOG = joinPath(homedir(), '.dsh', 'qq-bot-pro', 'bridge.log');\nfunction gateDiag(message) {\n    try {\n        mkdirSync(dirname(QQ_GATE_LOG), { recursive: true });\n        appendFileSync(QQ_GATE_LOG, '[' + new Date().toISOString() + '] ' + message + '\\n');\n    }\n    catch { /* ignore */ }\n}\nexport function setupMiddlewares(bot, config, manager, logger) {"
+      },
+      {
+        "find": "    // 5. 群聊 @bot 门控\n    bot.use(mentionGate({",
+        "replace": "    // 5. 群聊 @bot 门控\n    //    isImplicitMention：群里没 @ 她、但明显在接她话的消息也放行 ——\n    //    官方机器人默认只在被 @ 时收到群消息，开启「接收所有消息」后每条都会进来，\n    //    这条规则保证她能接着自己的话往下聊，而不是每句都得 @。\n    bot.use(mentionGate({"
+      },
+      {
+        "find": "        requireMentionInGroup: config.requireMention,\n    }));",
+        "replace": "        requireMentionInGroup: config.requireMention,\n        isImplicitMention: (ctx) => isImplicitMention(ctx),\n        onSkip: (ctx, decision) => {\n            const msg = ctx.message;\n            if (msg?.kind !== 'group')\n                return;\n            gateDiag('gate:skip ' + decision.reason + ' g=' + String(msg.groupOpenid || '').slice(0, 12) + ' from=' + String(msg.senderName || msg.senderId || '').slice(0, 20) + ' ' + String(msg.content || '').slice(0, 40).replace(/\\s+/g, ' '));\n        },\n    }));"
+      },
+      {
+        "find": "    }));\n    // 6. 内容清洗（去 @marker、表情标签、多余空白）",
+        "replace": "    }));\n    // 5.5 门控观测：放行时记一条，便于确认群消息真的到了、以及是不是隐式接话\n    bot.use(async (ctx, next) => {\n        try {\n            const msg = ctx.message;\n            if (msg?.kind === 'group') {\n                const decision = ctx.state?.mention;\n                gateDiag('gate:pass ' + msg.rawEventType + ' implicit=' + (decision?.implicit ?? '?') + ' why=' + (msg.__why ?? ctx.state?.spokeReason ?? '-') + ' g=' + String(msg.groupOpenid || '').slice(0, 12) + ' from=' + String(msg.senderName || msg.senderId || '').slice(0, 20) + ' text=' + String(msg.content || '').slice(0, 40).replace(/\\s+/g, ' '));\n            }\n        }\n        catch { /* 观测失败不影响链路 */ }\n        await next();\n    });\n    // 6. 内容清洗（去 @marker、表情标签、多余空白）"
+      },
+      {
+        "find": "//# sourceMappingURL=middleware-setup.js.map",
+        "replace": "//# sourceMappingURL=middleware-setup.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
+      }
+    ],
+    "dist/model/model-resolver.js": [
+      {
+        "find": "import { SettingsReader } from \"./settings-reader.js\";\nexport class ModelResolver {",
+        "replace": "import { SettingsReader } from \"./settings-reader.js\";\n// [qq-bot-pro patch] QQ 是纯聊天场景，默认思考强度固定为 low（省 token、回得快）。\n// 若某处显式给了 reasoningEffort（per-peer override / config），则以显式值为准。\nconst QQ_DEFAULT_REASONING_EFFORT = 'low';\nfunction withChatEffort(route) {\n    if (!route)\n        return route;\n    if (route.reasoningEffort)\n        return route;\n    return { ...route, reasoningEffort: QQ_DEFAULT_REASONING_EFFORT };\n}\nexport class ModelResolver {"
+      },
+      {
+        "find": "    getEffectiveRoute(sessionKey) {\n        return this.prefs.getOverride(sessionKey) ?? this.resolveDefault();\n    }",
+        "replace": "    getEffectiveRoute(sessionKey) {\n        return withChatEffort(this.prefs.getOverride(sessionKey) ?? this.resolveDefault());\n    }"
+      },
+      {
+        "find": "        if (override)\n            return override;\n        if (this.config.provider && this.config.model) {",
+        "replace": "        if (override)\n            return withChatEffort(override);\n        if (this.config.provider && this.config.model) {"
+      },
+      {
+        "find": "            return withChatEffort(override);\n        if (this.config.provider && this.config.model) {\n            return { provider: this.config.provider, model: this.config.model };\n        }\n        return this.resolveDefault();",
+        "replace": "            return withChatEffort(override);\n        if (this.config.provider && this.config.model) {\n            return withChatEffort({ provider: this.config.provider, model: this.config.model });\n        }\n        return this.resolveDefault();"
+      },
+      {
+        "find": "        }\n        return this.resolveDefault();\n    }",
+        "replace": "        }\n        return withChatEffort(this.resolveDefault());\n    }"
+      },
+      {
+        "find": "//# sourceMappingURL=model-resolver.js.map",
+        "replace": "//# sourceMappingURL=model-resolver.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
+      }
+    ],
+    "dist/transport/inbound.js": [
+      {
+        "find": "import { createUserMessage } from '@deepseek-ai/dsh-llm';\nimport { classifyContentType, isVoiceContentType, } from \"./attachment.js\";",
+        "replace": "import { createUserMessage } from '@deepseek-ai/dsh-llm';\nimport { appendFileSync, mkdirSync } from 'node:fs';\nimport { homedir } from 'node:os';\nimport { dirname, join as joinPath } from 'node:path';\nimport { classifyContentType, isVoiceContentType, } from \"./attachment.js\";"
+      },
+      {
+        "find": "    const content = [{ type: 'text', text: agentBody }];\n    const message = createUserMessage({",
+        "replace": "    const content = [{ type: 'text', text: agentBody }];\n    // [qq-bot-pro patch] 用户发的图片直接作为 image block 塞进模型上下文，\n    // 让模型（deepseek-flash 支持图片输入）真正「看见」图，而不是只拿到一个本地路径。\n    await attachInboundImages(content, mwState, logger);\n    const message = createUserMessage({"
+      },
+      {
+        "find": "}\n// ══════════════════════════════════════════════════════════════",
+        "replace": "}\n\n// ══════════════════════════════════════════════════════════════"
+      },
+      {
+        "find": "// ══════════════════════════════════════════════════════════════\n// Body Assembly（5 层组装）",
+        "replace": "// ══════════════════════════════════════════════════════════════\n// [qq-bot-pro patch] 入站图片注入\n// ══════════════════════════════════════════════════════════════\nconst QQ_DIAG_FILE = joinPath(homedir(), '.dsh', 'qq-bot-pro', 'bridge.log');\nfunction qqDiag(msg) {\n    try {\n        mkdirSync(dirname(QQ_DIAG_FILE), { recursive: true });\n        appendFileSync(QQ_DIAG_FILE, '[' + new Date().toISOString() + '] inbound: ' + msg + '\\n', 'utf8');\n    }\n    catch { }\n}\nfunction sniffImageMediaType(bytes) {\n    if (!bytes || bytes.length < 12)\n        return null;\n    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)\n        return 'image/png';\n    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)\n        return 'image/jpeg';\n    if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38)\n        return 'image/gif';\n    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46\n        && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50)\n        return 'image/webp';\n    return null;\n}\n/** 把已下载的图片附件注入 content（image block），失败仅告警不阻断消息。 */\nexport async function attachInboundImages(content, state, logger) {\n    const files = [\n        ...(state?.downloadedFiles ?? []),\n        ...(state?.downloadedQuoteFiles ?? []),\n    ].filter((f) => f && f.contentType === 'image' && typeof f.localPath === 'string');\n    if (files.length === 0)\n        return;\n    const rt = globalThis.__qqbotRuntime;\n    let attachments;\n    try {\n        attachments = rt?.ctx?.get?.('attachments');\n    }\n    catch { attachments = undefined; }\n    if (!attachments?.saveImage) {\n        qqDiag('no attachments service, skip image inject (' + files.length + ')');\n        logger?.warn?.('im-qqbot: attachments 服务不可用，图片未注入模型上下文');\n        return;\n    }\n    const { readFile } = await import('node:fs/promises');\n    let ok = 0;\n    for (const f of files) {\n        try {\n            const data = new Uint8Array(await readFile(f.localPath));\n            const mediaType = sniffImageMediaType(data);\n            if (!mediaType) {\n                qqDiag('skip unknown image type: ' + f.localPath);\n                continue;\n            }\n            const ref = await attachments.saveImage({ data, mediaType, name: f.filename });\n            content.push({ type: 'image', attachment: ref });\n            ok += 1;\n            qqDiag('image injected ok: ' + f.localPath + ' ' + mediaType + ' ' + data.length + 'B');\n        }\n        catch (err) {\n            qqDiag('image inject FAILED: ' + f.localPath + ' — ' + (err instanceof Error ? err.message : String(err)));\n            logger?.warn?.('im-qqbot: 图片注入失败 ' + f.localPath + ': ' + (err instanceof Error ? err.message : String(err)));\n        }\n    }\n    if (ok > 0) {\n        content.push({ type: 'text', text: '（上面 ' + ok + ' 张图片是用户这次发来的，已直接附在这条消息里，可以直接看，不需要再读文件或调用工具）' });\n        logger?.info?.('im-qqbot: 已注入 ' + ok + ' 张图片到模型上下文');\n    }\n}\n\n// ══════════════════════════════════════════════════════════════\n// Body Assembly（5 层组装）"
+      },
+      {
+        "find": "//# sourceMappingURL=inbound.js.map",
+        "replace": "//# sourceMappingURL=inbound.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
+      }
+    ],
+    "dist/index.js": [
+      {
+        "find": "    const resolvedConfig = { ...config, appId, appSecret };\n    await bootstrapGateway(ctx, agents, resolvedConfig, logger);\n}",
+        "replace": "    const resolvedConfig = { ...config, appId, appSecret };\n    // ── 启动重试（qq-bot-pro 补丁）：冷启动偶发网关未拉起，重试并落盘诊断 ──\n    let lastError;\n    const BOOT_ATTEMPTS = 4;\n    for (let attempt = 1; attempt <= BOOT_ATTEMPTS; attempt++) {\n        try {\n            await bootstrapGateway(ctx, agents, resolvedConfig, logger);\n            return;\n        }\n        catch (err) {\n            lastError = err;\n            const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);\n            logger.error(`QQ 网关启动失败（第 ${attempt}/${BOOT_ATTEMPTS} 次）: ${detail}`);\n            try {\n                const { appendFileSync, mkdirSync } = await import('node:fs');\n                const { homedir } = await import('node:os');\n                const { join: j } = await import('node:path');\n                const dir = j(homedir(), '.dsh', 'qq-bot-pro');\n                mkdirSync(dir, { recursive: true });\n                appendFileSync(j(dir, 'bridge.log'), `[${new Date().toISOString()}] boot:attempt-fail ${attempt}/${BOOT_ATTEMPTS} ${String(detail).split('\\n')[0]}\\n`);\n            }\n            catch { /* 诊断写入失败不影响重试 */ }\n            if (attempt < BOOT_ATTEMPTS) {\n                await new Promise((r) => setTimeout(r, 3000 * attempt));\n            }\n        }\n    }\n    throw lastError;\n}"
+      },
+      {
+        "find": "//# sourceMappingURL=index.js.map",
+        "replace": "//# sourceMappingURL=index.js.map\n// qq-bot-pro:patched (do not remove — lib/patch-host.mjs uses this marker)\n"
+      }
+    ]
+  },
+  "create": {
+    "dist/gateway/spoke-tracker.js": "/**\n * 群聊「接话」判定表（纯本地，零 token）。\n *\n * 官方 QQ 机器人默认只在被 @ 时处理群消息（config.requireMention）。群管理开启\n * 「接收所有消息」后每条群消息都会推到网关，但仍要决定「这条要不要跑一轮模型」\n * ——跑一轮就是一次 token。所有判定都在这里，只用时间戳和字符串匹配，不调模型。\n *\n * 配置：~/.dsh/qq-bot-pro/settings.json 的 gate 段（改完 2 秒内生效）。\n * 每条规则都能单独关：answerAll / replyToName / replyToQuote / replyToFollowUp /\n * skipWhenMentioningOthers / mergeBurst。\n */\nimport { readFileSync } from 'node:fs';\nimport { homedir } from 'node:os';\nimport { join } from 'node:path';\n\nconst spoken = new Map();   // 'group:<openid>' -> 她最后说话时间\nconst answered = new Map(); // 'group:<openid>:<senderId>' -> 上次放行时间（连发合并用）\n\nconst SETTINGS_FILE = join(homedir(), '.dsh', 'qq-bot-pro', 'settings.json');\nconst LEGACY_GATE_FILE = join(homedir(), '.dsh', 'qq-bot-pro', 'gate.json');\nconst DEFAULT_GATE = {\n    answerAll: false,                 // 群里谁说话都接（会花 token：每条约一轮）；默认关，见 settings.json\n    replyToName: true,                // 有人叫她名字就接\n    replyToQuote: true,               // 引用她的话就接\n    replyToFollowUp: true,            // 她刚说完话，接着说的话就接\n    skipWhenMentioningOthers: true,   // @ 了别人时不插嘴\n    mergeBurst: true,                 // 同一个人连发只接第一句\n    nameHints: ['小肥鱼', '肥鱼', '鲸鱼', '小鱼'],\n    followWindowMs: 5 * 60 * 1000,\n    quoteWindowMs: 15 * 60 * 1000,\n    burstMs: 2500\n};\n\nlet cache = { at: 0, value: DEFAULT_GATE };\nfunction readJson(file) {\n    try {\n        const raw = JSON.parse(readFileSync(file, 'utf8'));\n        return raw && typeof raw === 'object' ? raw : undefined;\n    }\n    catch {\n        return undefined;\n    }\n}\nfunction gateConfig() {\n    const now = Date.now();\n    if (now - cache.at < 2000)\n        return cache.value;\n    const settings = readJson(SETTINGS_FILE);\n    const gate = (settings && typeof settings.gate === 'object' && settings.gate)\n        ? settings.gate\n        : (readJson(LEGACY_GATE_FILE) ?? {});\n    cache = { at: now, value: { ...DEFAULT_GATE, ...gate } };\n    return cache.value;\n}\n\nfunction keyOf(target) {\n    if (!target || !target.scope || !target.targetId)\n        return undefined;\n    return String(target.scope) + ':' + String(target.targetId);\n}\n\n/** 记一次「她在这个会话说过话」。 */\nexport function markBotSpoke(target, at = Date.now()) {\n    const key = keyOf(target);\n    if (!key)\n        return;\n    spoken.set(key, at);\n}\n\n/** 她最后一次在这个会话说话的时间戳（没有则 0）。 */\nexport function lastBotSpoke(target) {\n    return spoken.get(keyOf(target)) ?? 0;\n}\n\n/**\n * 隐式 @：群里没 @ 她、但这条消息该接。\n * 命中顺序：叫她名字 → 引用她 → 接着她的话 → answerAll。\n * 每次命中都把原因写到 ctx.state.spokeReason，便于日志核对。\n */\nexport function isImplicitMention(ctx) {\n    try {\n        const msg = ctx && ctx.message;\n        if (!msg || msg.kind !== 'group' || !msg.groupOpenid)\n            return false;\n        if (msg.senderIsBot)\n            return false;\n        const cfg = gateConfig();\n        const mentions = msg.mentions;\n        if (cfg.skipWhenMentioningOthers !== false && Array.isArray(mentions) && mentions.length > 0 && !mentions.some((m) => m && m.is_you === true))\n            return false;\n        const key = 'group:' + String(msg.groupOpenid);\n        const who = key + ':' + String(msg.senderId || '');\n        const now = Date.now();\n        const text = String(msg.content || '');\n        const prev = answered.get(who) ?? 0;\n        const burst = cfg.mergeBurst !== false && now - prev < (cfg.burstMs ?? 2500);\n        const pass = (reason) => {\n            if (ctx.state)\n                ctx.state.spokeReason = reason;\n            answered.set(who, now);\n            return true;\n        };\n        const hit = (reason) => (burst ? false : pass(reason));\n        if (cfg.replyToName !== false && (cfg.nameHints || []).some((h) => h && text.includes(String(h))))\n            return hit('name');\n        const last = spoken.get(key) ?? 0;\n        const quote = ctx.state && ctx.state.quote;\n        const quoted = Boolean(quote && (quote.text || quote.rawContent));\n        if (cfg.replyToQuote !== false && quoted && last && now - last <= (cfg.quoteWindowMs ?? 900000))\n            return hit('quote');\n        if (cfg.replyToFollowUp !== false && last && now - last <= (cfg.followWindowMs ?? 300000))\n            return hit('follow');\n        if (cfg.answerAll !== false)\n            return hit('all');\n        return false;\n    }\n    catch {\n        return false;\n    }\n}\n"
+  }
 }

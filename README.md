@@ -4,7 +4,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 🎨 表情包 | 16 张内置表情 + `qq_list_stickers` / `qq_send_sticker` 工具；也会把回复里的 `[sticker:名]`、`![名](url)` 自动换成真图发出去 |
+| 🎨 表情包 | `qq_list_stickers` / `qq_send_sticker` 工具 + 回复里的 `[sticker:名]`、`![名](url)` 自动换成真图发出去；把你的图丢进 `stickers/` 即可（文件名就是表情名） |
 | 💬 主动发言 | 冷场定时器：群里/私聊安静到阈值后自己开口（默认群 30 分钟、私聊 40 分钟，概率 0.5） |
 | 🧠 连续对话 | 长期记忆 `qq_memory_*`（跨会话、跨天）；群聊本地存档（官方 SDK 回复后清空 history buffer，本插件自己落盘）；群聊/私聊两个窗格的对话互相可见 |
 
@@ -166,7 +166,14 @@ tool:registered qq_list_stickers
 | `qq_send_sticker` | 按名字发表情，例如 `草`、`乐`、`摸鱼`、`气鼓鼓`（情绪词会兜底映射到最接近的一张） |
 | `qq_memory_append` / `qq_memory_query` / `qq_memory_remove` / `qq_memory_clear` | 长期记忆增删查清 |
 
-表情文件在 `stickers/*.png`，想换图直接替换同名文件即可（`generate_stickers.py` 是当初生成脚本，需要 Windows 的 simhei/impact 字体）。
+表情文件放在 `stickers/` 目录，**文件名去掉扩展名就是表情名**，支持 png / gif / jpg / webp，中文名也行（例：`好耶.png` → `[sticker:好耶]`）。改完不用重启，下一次调用就会读到新文件。
+
+目录空着也能用：
+
+- 装了 dsh-nekowhale-stickers 表情包插件的话，会自动回落到它的表情库；
+- 模型自造的表情名（「气鼓鼓」「委屈巴巴」「笑死」）会按关键词映射到最接近的那张，不会因为找不到图而只发文字。
+
+`generate_stickers.py` 是早期用 Windows 自带字体绘制内置表情的脚本，只是留个参考——v1.0.3 起包内不再附带那 16 张图，请用你自己的。
 
 ## 常见问题
 
@@ -216,4 +223,4 @@ node lib/gen-patches.mjs --pristine ./package --live ~/.dsh/profiles/desktop/nod
 
 ## 许可
 
-MIT。内置表情为脚本自绘的简单图片；若二次分发请自行确认字体授权（`generate_stickers.py` 用的是 Windows 自带字体）。
+MIT。仓库不附带表情图片；`generate_stickers.py` 若自绘分发，请自行确认字体授权（它用的是 Windows 自带字体）。

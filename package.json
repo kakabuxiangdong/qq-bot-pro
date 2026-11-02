@@ -1,6 +1,6 @@
 {
   "name": "qq-bot-pro",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "给 DSH 的 QQ 官方机器人通道（@tencent-connect/dsh-qqbot / im-qqbot）补齐表情包、主动发言、长期记忆与群聊存档",
   "keywords": [
     "dsh",
